@@ -566,9 +566,10 @@ function ApplicationForm({ onSubmitted }) {
   const validateStep = () => {
     setError('');
     if (step === 0) {
-      if (!form.fullName || !form.email || !form.phone || !form.city) { setError('Please fill in all required fields.'); return false; }
+      if (!form.fullName || !form.email || !form.phone || !form.city || !form.country) { setError('Please fill in all required fields.'); return false; }
       if (!/^\S+@\S+\.\S+$/.test(form.email)) { setError('Please enter a valid email address.'); return false; }
     }
+    if (step === 2 && !form.hasComputer) { setError('Please tell us whether you own a computer.'); return false; }
     if (step === 4 && !form.learningPath) { setError('Please choose a learning journey to continue.'); return false; }
     return true;
   };
@@ -686,11 +687,15 @@ function ApplicationForm({ onSubmitted }) {
                 <input style={inputStyle} value={form.portfolio} onChange={set('portfolio')} placeholder="https://" />
               </Field>
               <Field label="Resume" hint="Optional — we'll follow up by email for the full file">
-                <label className="flex items-center gap-2 cursor-pointer" style={{ ...inputStyle, display: 'flex', color: C.muted }}>
+                <div className="flex items-center gap-2" style={{ ...inputStyle, display: 'flex', color: C.muted, position: 'relative' }}>
                   <Upload size={15} />
                   {form.resumeName || 'Choose a file'}
-                  <input type="file" className="hidden" onChange={(e) => set('resumeName')(e.target.files[0] ? e.target.files[0].name : '')} />
-                </label>
+                  <input
+                    type="file"
+                    onChange={(e) => set('resumeName')(e.target.files[0] ? e.target.files[0].name : '')}
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
+                  />
+                </div>
               </Field>
             </div>
           )}
@@ -1134,13 +1139,12 @@ export default function App() {
   const goApply = () => scrollToId('apply');
   const goLearnMore = () => scrollToId('about');
 
-  // If an admin session already exists (e.g. page refresh), skip straight to the dashboard.
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session && view === 'admin-gate') setView('admin');
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // If an admin session already exists (e.g. signed in earlier), skip straight to the
+  // dashboard instead of showing the login form again.
+  const goAdmin = async () => {
+    const { data } = await supabase.auth.getSession();
+    setView(data.session ? 'admin' : 'admin-gate');
+  };
 
   if (view === 'success') return (<><GlobalStyles /><SuccessView onHome={() => setView('landing')} /></>);
   if (view === 'admin-gate') return (<><GlobalStyles /><AdminGate onSuccess={() => setView('admin')} onBack={() => setView('landing')} /></>);
@@ -1157,7 +1161,7 @@ export default function App() {
       <WhyJoin />
       <WhoCanApply onApply={goApply} />
       <ApplicationForm onSubmitted={() => { setView('success'); window.scrollTo(0, 0); }} />
-      <Footer onAdmin={() => setView('admin-gate')} />
+      <Footer onAdmin={goAdmin} />
     </div>
   );
 }
