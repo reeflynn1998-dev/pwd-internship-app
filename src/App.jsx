@@ -1,16 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState } from 'react';
 import {
   Sparkles, Briefcase, Compass, Users, Award, TrendingUp, Menu, X,
-  CheckCircle2, ArrowRight, ChevronRight, ChevronLeft, Laptop, Wifi,
-  Lock, MapPin, Upload, LayoutDashboard, RefreshCw, Trash2, Square, LogOut,
-  FileText, Download,
+  CheckCircle2, ArrowRight, ChevronRight, Laptop, Wifi,
+  Square, FileText, Download, ExternalLink,
 } from 'lucide-react';
-import {
-  BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer
-} from 'recharts';
-import { supabase } from './lib/supabaseClient';
-import { submitApplication, fetchApplications, deleteAllApplications, updateApplicationStatus } from './lib/api';
 
 /* ---------------------------------------------------------------
    TOKENS — monochrome, hairline-border, mono-label system
@@ -32,8 +25,6 @@ const F = {
   body: "'Inter', system-ui, sans-serif",
   mono: "'IBM Plex Mono', 'Courier New', monospace",
 };
-
-const LEARNING_PATHS = ['AI Developer', 'Sales', 'Leadership'];
 
 /* ---------------------------------------------------------------
    GLOBAL STYLES (animations + small helpers; fonts load via index.css)
@@ -496,659 +487,68 @@ function WhoCanApply({ onApply }) {
 }
 
 /* ---------------------------------------------------------------
-   APPLICATION FORM
+   APPLICATION FORM — links out to a Google Form (backed by a Google Sheet)
 --------------------------------------------------------------- */
-const STEP_LABELS = ['Personal', 'PWD Info', 'Technical', 'Experience', 'Path', 'Finish'];
+const GOOGLE_FORM_ID = '1FAIpQLSf9b9rIb-_tVQppk2JjuatSdsoRCa9L-FgFLf2ctaY95Ov-uw';
+const GOOGLE_FORM_URL = `https://docs.google.com/forms/d/e/${GOOGLE_FORM_ID}/viewform`;
+const GOOGLE_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1pjrglXZZQkDcZEWlCr0IsqonTxux2OCpLMAX-yWKMKo/edit';
 
-const EMPTY_FORM = {
-  fullName: '', email: '', phone: '', city: '', country: 'Philippines',
-  pwdType: '', hasPwdId: '',
-  hasComputer: '', internetSpeed: '', deviceType: '',
-  occupation: '', skills: '', portfolio: '', resumeName: '',
-  learningPath: '',
-  whyJoin: '', careerGoals: '', hearAboutUs: '', agreePrivacy: false,
-};
-
-function Field({ label, required, children, hint }) {
-  return (
-    <label className="block mb-5">
-      <span style={{ fontFamily: F.mono, fontSize: 11, letterSpacing: '0.03em', color: C.muted }} className="block mb-1.5">
-        {label}{required && <span style={{ color: C.danger }}> *</span>}
-      </span>
-      {children}
-      {hint && <span style={{ color: C.muted, fontSize: 12, fontFamily: F.body }} className="block mt-1">{hint}</span>}
-    </label>
-  );
-}
-
-const inputStyle = {
-  width: '100%', padding: '11px 12px',
-  border: `1px solid ${C.line}`, fontFamily: F.body, fontSize: 14,
-  color: C.ink, background: C.paper,
-};
-
-// Map camelCase form state to the snake_case columns used in Postgres
-function toRecord(form) {
-  return {
-    full_name: form.fullName,
-    email: form.email,
-    phone: form.phone,
-    city: form.city,
-    country: form.country,
-    pwd_type: form.pwdType || null,
-    has_pwd_id: form.hasPwdId || null,
-    has_computer: form.hasComputer || null,
-    internet_speed: form.internetSpeed || null,
-    device_type: form.deviceType || null,
-    occupation: form.occupation || null,
-    skills: form.skills || null,
-    portfolio: form.portfolio || null,
-    resume_name: form.resumeName || null,
-    learning_path: form.learningPath,
-    why_join: form.whyJoin,
-    career_goals: form.careerGoals,
-    hear_about_us: form.hearAboutUs || null,
-    agree_privacy: form.agreePrivacy,
-  };
-}
-
-function ApplicationForm({ onSubmitted }) {
-  const [step, setStep] = useState(0);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  const set = (k) => (e) => {
-    const v = e && e.target ? (e.target.type === 'checkbox' ? e.target.checked : e.target.value) : e;
-    setForm((f) => ({ ...f, [k]: v }));
-  };
-
-  const validateStep = () => {
-    setError('');
-    if (step === 0) {
-      if (!form.fullName || !form.email || !form.phone || !form.city || !form.country) { setError('Please fill in all required fields.'); return false; }
-      if (!/^\S+@\S+\.\S+$/.test(form.email)) { setError('Please enter a valid email address.'); return false; }
-    }
-    if (step === 2 && !form.hasComputer) { setError('Please tell us whether you own a computer.'); return false; }
-    if (step === 4 && !form.learningPath) { setError('Please choose a learning journey to continue.'); return false; }
-    return true;
-  };
-
-  const next = () => { if (validateStep()) setStep((s) => Math.min(s + 1, STEP_LABELS.length - 1)); };
-  const back = () => { setError(''); setStep((s) => Math.max(s - 1, 0)); };
-
-  const submit = async () => {
-    setError('');
-    if (!form.whyJoin || !form.careerGoals) { setError('Please answer both questions below.'); return; }
-    if (!form.agreePrivacy) { setError('Please agree to the Privacy Policy to submit.'); return; }
-    setSubmitting(true);
-    try {
-      await submitApplication(toRecord(form));
-      onSubmitted();
-    } catch (e) {
-      setError(e.message || 'Something went wrong saving your application. Please try again.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const progressPct = (step / (STEP_LABELS.length - 1)) * 100;
-
+function ApplyEmbed() {
   return (
     <section id="apply" style={{ background: C.offwhite, borderTop: `1px solid ${C.line}` }} className="py-20 sm:py-28">
-      <div className="max-w-2xl mx-auto px-5 sm:px-8">
+      <div className="max-w-2xl mx-auto px-5 sm:px-8 text-center">
         <p style={{ fontFamily: F.mono, color: C.muted, fontSize: 13 }} className="mb-4">/ application</p>
-        <h2 style={{ fontFamily: F.display, color: C.ink, fontWeight: 600, letterSpacing: '-0.01em' }} className="text-3xl sm:text-5xl mb-8">
+        <h2 style={{ fontFamily: F.display, color: C.ink, fontWeight: 600, letterSpacing: '-0.01em' }} className="text-3xl sm:text-5xl mb-6">
           tell us about you.
         </h2>
-
-        <div className="mb-10">
-          <div className="relative h-[2px] mb-3" style={{ background: C.line }}>
-            <div className="absolute top-0 left-0 h-[2px] transition-all" style={{ width: `${progressPct}%`, background: C.ink }} />
-          </div>
-          <div className="flex justify-between">
-            {STEP_LABELS.map((l, i) => (
-              <span key={l} style={{ fontFamily: F.mono, fontSize: 10, color: i <= step ? C.ink : C.mutedLight, fontWeight: i === step ? 700 : 400 }}>
-                {String(i + 1).padStart(2, '0')}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div className="p-6 sm:p-8" style={{ background: C.paper, border: `1px solid ${C.line}` }}>
-          {step === 0 && (
-            <div>
-              <Field label="Full Name" required><input style={inputStyle} value={form.fullName} onChange={set('fullName')} /></Field>
-              <Field label="Email" required><input type="email" style={inputStyle} value={form.email} onChange={set('email')} /></Field>
-              <Field label="Phone" required><input type="tel" style={inputStyle} value={form.phone} onChange={set('phone')} /></Field>
-              <div className="grid sm:grid-cols-2 gap-4">
-                <Field label="City / Province" required><input style={inputStyle} value={form.city} onChange={set('city')} /></Field>
-                <Field label="Country" required><input style={inputStyle} value={form.country} onChange={set('country')} /></Field>
-              </div>
-            </div>
-          )}
-
-          {step === 1 && (
-            <div>
-              <Field label="PWD Type" hint="Optional">
-                <select style={inputStyle} value={form.pwdType} onChange={set('pwdType')}>
-                  <option value="">Select one</option>
-                  <option>Physical</option><option>Visual</option><option>Hearing</option>
-                  <option>Speech</option><option>Intellectual</option><option>Psychosocial</option>
-                  <option>Multiple</option><option>Prefer not to say</option>
-                </select>
-              </Field>
-              <Field label="Do you have a PWD ID?" hint="Optional">
-                <div className="flex gap-4 mt-1">
-                  {['Yes', 'No'].map((v) => (
-                    <label key={v} className="flex items-center gap-2 text-sm" style={{ fontFamily: F.body, color: C.ink }}>
-                      <input type="radio" name="hasPwdId" checked={form.hasPwdId === v} onChange={() => set('hasPwdId')(v)} /> {v}
-                    </label>
-                  ))}
-                </div>
-              </Field>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div>
-              <Field label="Do you own a computer?" required>
-                <div className="flex gap-4 mt-1">
-                  {['Yes', 'No'].map((v) => (
-                    <label key={v} className="flex items-center gap-2 text-sm" style={{ fontFamily: F.body, color: C.ink }}>
-                      <input type="radio" name="hasComputer" checked={form.hasComputer === v} onChange={() => set('hasComputer')(v)} /> {v}
-                    </label>
-                  ))}
-                </div>
-              </Field>
-              <Field label="Internet Speed">
-                <select style={inputStyle} value={form.internetSpeed} onChange={set('internetSpeed')}>
-                  <option value="">Select one</option>
-                  <option>Slow (under 5 Mbps)</option><option>Moderate (5–20 Mbps)</option>
-                  <option>Fast (over 20 Mbps)</option><option>Not sure</option>
-                </select>
-              </Field>
-              <Field label="Device Type">
-                <select style={inputStyle} value={form.deviceType} onChange={set('deviceType')}>
-                  <option value="">Select one</option>
-                  <option>Desktop</option><option>Laptop</option><option>Tablet</option><option>Smartphone only</option>
-                </select>
-              </Field>
-            </div>
-          )}
-
-          {step === 3 && (
-            <div>
-              <Field label="Current Occupation"><input style={inputStyle} value={form.occupation} onChange={set('occupation')} /></Field>
-              <Field label="Skills" hint="A short comma-separated list is fine">
-                <textarea rows={3} style={{ ...inputStyle, resize: 'vertical' }} value={form.skills} onChange={set('skills')} />
-              </Field>
-              <Field label="Portfolio" hint="Link to a site, Behance, GitHub — optional">
-                <input style={inputStyle} value={form.portfolio} onChange={set('portfolio')} placeholder="https://" />
-              </Field>
-              <Field label="Resume" hint="Optional — we'll follow up by email for the full file">
-                <div className="flex items-center gap-2" style={{ ...inputStyle, display: 'flex', color: C.muted, position: 'relative' }}>
-                  <Upload size={15} />
-                  {form.resumeName || 'Choose a file'}
-                  <input
-                    type="file"
-                    onChange={(e) => set('resumeName')(e.target.files[0] ? e.target.files[0].name : '')}
-                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
-                  />
-                </div>
-              </Field>
-            </div>
-          )}
-
-          {step === 4 && (
-            <div>
-              <span style={{ fontFamily: F.mono, fontSize: 11, letterSpacing: '0.03em', color: C.muted }} className="block mb-3">
-                Choose your learning journey <span style={{ color: C.danger }}>*</span>
-              </span>
-              <div className="grid gap-3">
-                {LEARNING_PATHS.map((p) => (
-                  <label key={p} className="flex items-center gap-3 p-4 cursor-pointer" style={{ border: `1px solid ${form.learningPath === p ? C.ink : C.line}`, background: form.learningPath === p ? C.highlight : C.paper }}>
-                    <input type="radio" name="learningPath" checked={form.learningPath === p} onChange={() => set('learningPath')(p)} />
-                    <span style={{ fontFamily: F.body, color: C.ink, fontWeight: 600, fontSize: 14 }}>{p}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {step === 5 && (
-            <div>
-              <Field label="Why do you want to join?" required>
-                <textarea rows={3} style={{ ...inputStyle, resize: 'vertical' }} value={form.whyJoin} onChange={set('whyJoin')} />
-              </Field>
-              <Field label="What are your career goals?" required>
-                <textarea rows={3} style={{ ...inputStyle, resize: 'vertical' }} value={form.careerGoals} onChange={set('careerGoals')} />
-              </Field>
-              <Field label="How did you hear about us?">
-                <select style={inputStyle} value={form.hearAboutUs} onChange={set('hearAboutUs')}>
-                  <option value="">Select one</option>
-                  <option>Facebook</option><option>LinkedIn</option><option>Referral</option>
-                  <option>AgencyCRM website</option><option>Other</option>
-                </select>
-              </Field>
-              <label className="flex items-start gap-2 mt-2 text-sm" style={{ fontFamily: F.body, color: C.ink }}>
-                <input type="checkbox" checked={form.agreePrivacy} onChange={set('agreePrivacy')} className="mt-1" />
-                I agree to the Privacy Policy. <span style={{ color: C.danger }}>*</span>
-              </label>
-            </div>
-          )}
-
-          {error && <p style={{ color: C.danger, fontSize: 13, fontFamily: F.body }} className="mt-4">{error}</p>}
-
-          <div className="flex justify-between mt-8">
-            <button onClick={back} disabled={step === 0} className="flex items-center gap-1" style={{ background: 'none', border: 'none', color: step === 0 ? C.mutedLight : C.muted, fontWeight: 500, fontSize: 13, fontFamily: F.mono, cursor: step === 0 ? 'default' : 'pointer' }}>
-              <ChevronLeft size={15} /> back
-            </button>
-            {step < STEP_LABELS.length - 1 ? (
-              <button onClick={next} className="flex items-center gap-2" style={{ background: C.ink, color: C.paper, fontWeight: 500, fontSize: 13, fontFamily: F.mono, padding: '11px 22px', border: 'none', cursor: 'pointer' }}>
-                next <ChevronRight size={15} />
-              </button>
-            ) : (
-              <button onClick={submit} disabled={submitting} className="flex items-center gap-2" style={{ background: C.ink, color: C.paper, fontWeight: 500, fontSize: 13, fontFamily: F.mono, padding: '11px 22px', border: 'none', cursor: 'pointer', opacity: submitting ? 0.6 : 1 }}>
-                {submitting ? 'submitting…' : 'submit application'}
-              </button>
-            )}
-          </div>
-        </div>
-
-        <p style={{ color: C.muted, fontFamily: F.body, fontSize: 12 }} className="text-center mt-6">
-          Your application is saved to a real database — the admin dashboard updates from the same
-          source in real time.
+        <p style={{ color: C.inkSoft, fontFamily: F.body, lineHeight: 1.7 }} className="text-base max-w-lg mx-auto mb-10">
+          The application takes about 10 minutes. It opens in a new tab so nothing here
+          gets lost — come back to this page any time.
         </p>
+        <a
+          href={GOOGLE_FORM_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-3"
+          style={{ background: C.ink, color: C.paper, fontWeight: 700, fontSize: 16, fontFamily: F.body, padding: '16px 28px', border: `1px solid ${C.ink}`, textDecoration: 'none' }}
+        >
+          start your application <ArrowRight size={17} />
+        </a>
       </div>
     </section>
   );
 }
 
 /* ---------------------------------------------------------------
-   SUCCESS VIEW
---------------------------------------------------------------- */
-function SuccessView({ onHome }) {
-  return (
-    <div style={{ background: C.paper, minHeight: '100vh' }} className="flex items-center justify-center px-5">
-      <div className="text-center max-w-md reveal">
-        <div className="w-14 h-14 flex items-center justify-center mx-auto mb-6" style={{ border: `1.5px solid ${C.ink}` }}>
-          <CheckCircle2 size={26} color={C.ink} />
-        </div>
-        <h1 style={{ fontFamily: F.display, color: C.ink, fontWeight: 600, letterSpacing: '-0.01em' }} className="text-3xl mb-3">
-          thank you for applying!
-        </h1>
-        <p style={{ color: C.inkSoft, fontFamily: F.body, lineHeight: 1.6 }} className="mb-8">
-          We've successfully received your application. Our team will review your submission and
-          reach out to shortlisted applicants.
-        </p>
-        <button onClick={onHome} style={{ background: C.ink, color: C.paper, fontWeight: 500, fontFamily: F.mono, fontSize: 13, padding: '12px 24px', border: 'none', cursor: 'pointer' }}>
-          back to homepage
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ---------------------------------------------------------------
    FOOTER
 --------------------------------------------------------------- */
-function Footer({ onAdmin }) {
+function Footer() {
   return (
     <footer style={{ background: C.paper, borderTop: `1px solid ${C.line}` }} className="py-10">
       <div className="max-w-6xl mx-auto px-5 sm:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
         <span style={{ color: C.muted, fontFamily: F.mono, fontSize: 12 }}>
           © {new Date().getFullYear()} pwd internship x agencycrm
         </span>
-        <button onClick={onAdmin} className="flex items-center gap-1.5" style={{ background: 'none', border: 'none', color: C.muted, fontSize: 12, fontFamily: F.mono, cursor: 'pointer' }}>
-          <Lock size={12} /> admin
-        </button>
+        <a
+          href={GOOGLE_SHEET_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5"
+          style={{ color: C.muted, fontSize: 12, fontFamily: F.mono, textDecoration: 'none' }}
+        >
+          <ExternalLink size={12} /> view applicants
+        </a>
       </div>
     </footer>
   );
 }
 
 /* ---------------------------------------------------------------
-   ADMIN — real Supabase Auth login
---------------------------------------------------------------- */
-function AdminGate({ onSuccess, onBack }) {
-  const [email, setEmail] = useState('');
-  const [pass, setPass] = useState('');
-  const [err, setErr] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleLogin = async () => {
-    setErr('');
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
-    setLoading(false);
-    if (error) setErr(error.message);
-    else onSuccess();
-  };
-
-  return (
-    <div style={{ background: C.paper, minHeight: '100vh' }} className="flex items-center justify-center px-5">
-      <div className="p-8 w-full max-w-sm" style={{ border: `1px solid ${C.line}` }}>
-        <Lock size={18} color={C.ink} className="mb-4" />
-        <h1 style={{ fontFamily: F.display, color: C.ink, fontWeight: 600 }} className="text-2xl mb-2">admin login</h1>
-        <p style={{ color: C.muted, fontSize: 13, fontFamily: F.body }} className="mb-5">
-          Sign in with the admin account you created in your Supabase project.
-        </p>
-        <div className="mb-3">
-          <input type="email" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin email" />
-        </div>
-        <input
-          type="password" style={inputStyle} value={pass} onChange={(e) => setPass(e.target.value)}
-          placeholder="password"
-          onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(); }}
-        />
-        {err && <p style={{ color: C.danger, fontSize: 13 }} className="mt-3">{err}</p>}
-        <div className="flex gap-3 mt-5">
-          <button onClick={handleLogin} disabled={loading} style={{ background: C.ink, color: C.paper, fontWeight: 500, fontSize: 13, fontFamily: F.mono, padding: '10px 18px', border: 'none', cursor: 'pointer', opacity: loading ? 0.6 : 1 }}>
-            {loading ? 'signing in…' : 'sign in'}
-          </button>
-          <button onClick={onBack} style={{ background: 'none', color: C.muted, fontSize: 13, fontFamily: F.mono, border: 'none', cursor: 'pointer' }}>
-            back to site
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const PIE_COLORS = [C.ink, C.muted, C.mutedLight, C.line];
-
-// Applicant pipeline: new -> accepted -> active -> graduate -> hired, with rejected as a side branch.
-const STATUS_FLOW = ['new', 'accepted', 'active', 'graduate', 'hired'];
-const STATUS_LABEL = { new: 'new', accepted: 'accepted', active: 'active intern', graduate: 'graduate', hired: 'hired', rejected: 'rejected' };
-const STATUS_NEXT_LABEL = { new: 'accept', accepted: 'activate', active: 'mark graduate', graduate: 'mark hired' };
-
-function StatCard({ label, value, sub }) {
-  return (
-    <div className="p-5" style={{ border: `1px solid ${C.line}` }}>
-      <p style={{ fontFamily: F.mono, color: C.muted, fontSize: 11 }} className="mb-2">{label}</p>
-      <p style={{ fontFamily: F.display, color: C.ink, fontWeight: 600 }} className="text-3xl">{value}</p>
-      {sub && <p style={{ color: C.mutedLight, fontSize: 12, fontFamily: F.body }} className="mt-1">{sub}</p>}
-    </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const s = status || 'new';
-  return (
-    <span
-      style={{
-        fontFamily: F.mono, fontSize: 10, letterSpacing: '0.02em',
-        color: s === 'rejected' ? C.danger : C.ink,
-        border: `1px solid ${s === 'rejected' ? C.danger : C.line}`,
-        padding: '3px 8px', whiteSpace: 'nowrap',
-      }}
-    >
-      {STATUS_LABEL[s] || s}
-    </span>
-  );
-}
-
-function ApplicantRow({ a, onChangeStatus, busy }) {
-  const s = a.status || 'new';
-  const nextIdx = STATUS_FLOW.indexOf(s);
-  const next = nextIdx >= 0 && nextIdx < STATUS_FLOW.length - 1 ? STATUS_FLOW[nextIdx + 1] : null;
-  return (
-    <div className="flex items-center justify-between gap-3 py-3 flex-wrap" style={{ borderBottom: `1px solid ${C.line}` }}>
-      <div className="min-w-0">
-        <p style={{ color: C.ink, fontSize: 13, fontFamily: F.body, fontWeight: 600 }} className="truncate">{a.full_name || 'Unnamed'}</p>
-        <p style={{ color: C.muted, fontSize: 11, fontFamily: F.mono }}>
-          {a.learning_path || '—'} · {[a.city, a.country].filter(Boolean).join(', ') || 'Unknown'} · {new Date(a.submitted_at).toLocaleDateString()}
-        </p>
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <StatusBadge status={s} />
-        {next && (
-          <button
-            disabled={busy}
-            onClick={() => onChangeStatus(a.id, next)}
-            className="hover-fill"
-            style={{ background: 'none', border: `1px solid ${C.ink}`, color: C.ink, fontFamily: F.mono, fontSize: 11, padding: '5px 10px', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}
-          >
-            {STATUS_NEXT_LABEL[s]} →
-          </button>
-        )}
-        {s !== 'rejected' ? (
-          <button
-            disabled={busy}
-            onClick={() => onChangeStatus(a.id, 'rejected')}
-            style={{ background: 'none', border: 'none', color: C.muted, fontFamily: F.mono, fontSize: 11, cursor: busy ? 'default' : 'pointer' }}
-          >
-            reject
-          </button>
-        ) : (
-          <button
-            disabled={busy}
-            onClick={() => onChangeStatus(a.id, 'new')}
-            style={{ background: 'none', border: 'none', color: C.muted, fontFamily: F.mono, fontSize: 11, cursor: busy ? 'default' : 'pointer' }}
-          >
-            reinstate
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function AdminDashboard({ onBack }) {
-  const [apps, setApps] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState('');
-  const [updatingId, setUpdatingId] = useState(null);
-  const [statusError, setStatusError] = useState('');
-
-  const refresh = useCallback(async () => {
-    setRefreshing(true);
-    setLoadError('');
-    try {
-      const data = await fetchApplications();
-      setApps(data);
-    } catch (e) {
-      setLoadError(e.message || 'Could not load applications.');
-      setApps([]);
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const stats = useMemo(() => {
-    if (!apps) return null;
-    const now = new Date();
-    const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startWeek = new Date(startToday); startWeek.setDate(startWeek.getDate() - 7);
-    const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const count = (fromDate) => apps.filter((a) => new Date(a.submitted_at) >= fromDate).length;
-    const byPath = LEARNING_PATHS.map((p) => ({ name: p, value: apps.filter((a) => a.learning_path === p).length }));
-    const pwdCounts = {};
-    apps.forEach((a) => { const k = a.pwd_type || 'Not specified'; pwdCounts[k] = (pwdCounts[k] || 0) + 1; });
-    const byPwd = Object.entries(pwdCounts).map(([name, value]) => ({ name, value }));
-    const locCounts = {};
-    apps.forEach((a) => { const k = [a.city, a.country].filter(Boolean).join(', ') || 'Unknown'; locCounts[k] = (locCounts[k] || 0) + 1; });
-    const byLocation = Object.entries(locCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
-    const statusCount = (s) => apps.filter((a) => (a.status || 'new') === s).length;
-    return {
-      total: apps.length, today: count(startToday), week: count(startWeek), month: count(startMonth),
-      accepted: statusCount('accepted'), active: statusCount('active'), graduates: statusCount('graduate'), hired: statusCount('hired'),
-      byPath, byPwd, byLocation,
-      all: [...apps].sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at)),
-    };
-  }, [apps]);
-
-  const clearAll = async () => {
-    if (!window.confirm('Delete ALL applications from the database? This cannot be undone.')) return;
-    try {
-      await deleteAllApplications();
-      refresh();
-    } catch (e) {
-      setLoadError(e.message || 'Could not delete applications.');
-    }
-  };
-
-  const changeStatus = async (id, status) => {
-    setUpdatingId(id);
-    setStatusError('');
-    const prevApps = apps;
-    setApps((cur) => cur.map((a) => (a.id === id ? { ...a, status } : a)));
-    try {
-      await updateApplicationStatus(id, status);
-    } catch (e) {
-      setApps(prevApps);
-      const msg = e.message || '';
-      setStatusError(
-        /status/i.test(msg)
-          ? "Could not update status — make sure you've re-run supabase/schema.sql to add the status column."
-          : (msg || 'Could not update status.')
-      );
-    } finally {
-      setUpdatingId(null);
-    }
-  };
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    onBack();
-  };
-
-  return (
-    <div style={{ background: C.paper, minHeight: '100vh' }} className="pb-16">
-      <div className="max-w-6xl mx-auto px-5 sm:px-8 pt-10">
-        <div className="flex items-center justify-between mb-8 flex-wrap gap-3">
-          <div className="flex items-center gap-2">
-            <LayoutDashboard size={18} color={C.ink} />
-            <h1 style={{ fontFamily: F.display, color: C.ink, fontWeight: 600 }} className="text-2xl">applicant dashboard</h1>
-          </div>
-          <div className="flex gap-3">
-            <button onClick={refresh} className="flex items-center gap-1.5" style={{ background: 'none', border: `1px solid ${C.line}`, color: C.muted, fontSize: 12, fontFamily: F.mono, padding: '8px 14px', cursor: 'pointer' }}>
-              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> refresh
-            </button>
-            <button onClick={clearAll} className="flex items-center gap-1.5" style={{ background: 'none', border: `1px solid ${C.line}`, color: C.danger, fontSize: 12, fontFamily: F.mono, padding: '8px 14px', cursor: 'pointer' }}>
-              <Trash2 size={13} /> delete all
-            </button>
-            <button onClick={signOut} className="flex items-center gap-1.5" style={{ background: 'none', border: 'none', color: C.muted, fontSize: 12, fontFamily: F.mono, cursor: 'pointer' }}>
-              <LogOut size={13} /> sign out
-            </button>
-          </div>
-        </div>
-
-        {loadError && <p style={{ color: C.danger, fontSize: 13, fontFamily: F.body }} className="mb-6">{loadError}</p>}
-
-        {!stats ? (
-          <p style={{ color: C.muted, fontFamily: F.body }}>Loading…</p>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-              <StatCard label="TOTAL APPLICANTS" value={stats.total} />
-              <StatCard label="TODAY" value={stats.today} />
-              <StatCard label="THIS WEEK" value={stats.week} />
-              <StatCard label="THIS MONTH" value={stats.month} />
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-10">
-              <StatCard label="ACCEPTED" value={stats.accepted} />
-              <StatCard label="ACTIVE INTERNS" value={stats.active} />
-              <StatCard label="GRADUATES" value={stats.graduates} />
-              <StatCard label="HIRED CONTRACTORS" value={stats.hired} />
-            </div>
-
-            <div className="grid lg:grid-cols-2 gap-5 mb-6">
-              <div className="p-6" style={{ border: `1px solid ${C.line}` }}>
-                <p style={{ fontFamily: F.mono, color: C.muted, fontSize: 11 }} className="mb-4">by learning journey</p>
-                {stats.total === 0 ? <EmptyNote /> : (
-                  <div style={{ width: '100%', height: 220 }}>
-                    <ResponsiveContainer>
-                      <BarChart data={stats.byPath}>
-                        <CartesianGrid stroke={C.line} vertical={false} />
-                        <XAxis dataKey="name" tick={{ fill: C.muted, fontSize: 12, fontFamily: F.mono }} axisLine={{ stroke: C.line }} tickLine={false} />
-                        <YAxis allowDecimals={false} tick={{ fill: C.muted, fontSize: 12 }} axisLine={{ stroke: C.line }} tickLine={false} />
-                        <Tooltip contentStyle={{ background: C.paper, border: `1px solid ${C.line}`, color: C.ink }} />
-                        <Bar dataKey="value" fill={C.ink} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
-              <div className="p-6" style={{ border: `1px solid ${C.line}` }}>
-                <p style={{ fontFamily: F.mono, color: C.muted, fontSize: 11 }} className="mb-4">by pwd type</p>
-                {stats.total === 0 ? <EmptyNote /> : (
-                  <div style={{ width: '100%', height: 220 }}>
-                    <ResponsiveContainer>
-                      <PieChart>
-                        <Pie data={stats.byPwd} dataKey="value" nameKey="name" outerRadius={80}>
-                          {stats.byPwd.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-                        </Pie>
-                        <Tooltip contentStyle={{ background: C.paper, border: `1px solid ${C.line}`, color: C.ink }} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="p-6 mb-6" style={{ border: `1px solid ${C.line}` }}>
-              <p style={{ fontFamily: F.mono, color: C.muted, fontSize: 11 }} className="mb-4">by location</p>
-              {stats.byLocation.length === 0 ? <EmptyNote /> : (
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {stats.byLocation.map(([loc, n]) => (
-                    <div key={loc} className="flex items-center justify-between">
-                      <span className="flex items-center gap-2" style={{ color: C.ink, fontSize: 13, fontFamily: F.body }}>
-                        <MapPin size={13} color={C.muted} /> {loc}
-                      </span>
-                      <span style={{ fontFamily: F.mono, color: C.ink, fontSize: 13 }}>{n}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="p-6" style={{ border: `1px solid ${C.line}` }}>
-              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <p style={{ fontFamily: F.mono, color: C.muted, fontSize: 11 }}>
-                  applicants ({stats.total}) — click an action to move someone through the pipeline
-                </p>
-                {statusError && <p style={{ color: C.danger, fontSize: 11, fontFamily: F.body }}>{statusError}</p>}
-              </div>
-              {stats.all.length === 0 ? <EmptyNote /> : (
-                <div className="flex flex-col">
-                  {stats.all.map((a) => (
-                    <ApplicantRow key={a.id} a={a} onChangeStatus={changeStatus} busy={updatingId === a.id} />
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function EmptyNote() {
-  return <p style={{ color: C.muted, fontFamily: F.body, fontSize: 13 }}>No applicants yet — submit the form to see this populate.</p>;
-}
-
-/* ---------------------------------------------------------------
    ROOT APP
 --------------------------------------------------------------- */
 export default function App() {
-  const [view, setView] = useState('landing');
   const goApply = () => scrollToId('apply');
   const goLearnMore = () => scrollToId('about');
-
-  // If an admin session already exists (e.g. signed in earlier), skip straight to the
-  // dashboard instead of showing the login form again.
-  const goAdmin = async () => {
-    const { data } = await supabase.auth.getSession();
-    setView(data.session ? 'admin' : 'admin-gate');
-  };
-
-  if (view === 'success') return (<><GlobalStyles /><SuccessView onHome={() => setView('landing')} /></>);
-  if (view === 'admin-gate') return (<><GlobalStyles /><AdminGate onSuccess={() => setView('admin')} onBack={() => setView('landing')} /></>);
-  if (view === 'admin') return (<><GlobalStyles /><AdminDashboard onBack={() => setView('landing')} /></>);
 
   return (
     <div style={{ fontFamily: F.body }}>
@@ -1160,8 +560,8 @@ export default function App() {
       <Curriculum />
       <WhyJoin />
       <WhoCanApply onApply={goApply} />
-      <ApplicationForm onSubmitted={() => { setView('success'); window.scrollTo(0, 0); }} />
-      <Footer onAdmin={goAdmin} />
+      <ApplyEmbed />
+      <Footer />
     </div>
   );
 }
